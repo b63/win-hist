@@ -157,6 +157,33 @@ function s:GetWindowBuffer(n) " {{{1
   endif
 endfunction " }}}1
 
+" ClearWindowHistory: remove buffer history for all windows
+function winhist#ClearWindowHistory(...) " {{{1
+  if !exists("s:winbuf_history")
+    return
+  endif
+
+  unlet s:winbuf_history
+  let s:winbuf_history = {}
+endfunction " }}}1
+
+" RemoveWindowHistory: remove the buffer history
+"   of the windows with the given winid(s).
+"   If no argument is given, removes current window
+function winhist#RemoveWindowHistory(...) " {{{1
+  if !exists("s:winbuf_history")
+    return
+  endif
+
+  if a:0 > 0
+    for winid in a:000
+      call remove(s:winbuf_history, winid)
+    endfor
+  else
+    call remove(s:winbuf_history, win_getid())
+  endif
+endfunction " }}}1
+
 " LogWindowBufferHistory: adds current buffer as an entry to the
 "   window-local history buffers opened in the current window
 function winhist#LogWindowHistory(...) " {{{1
