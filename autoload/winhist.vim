@@ -95,11 +95,12 @@ endfunction " }}}1
 
 " GetWindowBufferHistory: look n steps either backwards or forwards (+n or -n)
 "   in the list of buffers opened in the current window and return the
-"   buffer number. If the buffer n steps away does not exist (:buflisted)
-"   then the last buffer that did exist will be returned. The return value
+"   buffer number. If the buffer n steps away is not laoded (:bufloaded)
+"   then the last buffer that is loaded will be returned. The return value
 "   is a list of two elements, the buffer number and the number of steps
-"   away the returned buffer actually was
-function s:GetWindowBuffer(n) " {{{2
+"   away the returned buffer actually was. If something goes wong, then 0
+"   is returned.
+function s:GetWindowBuffer(n) " {{{1
   if !exists("s:winbuf_history")
     return
   endif
@@ -125,7 +126,7 @@ function s:GetWindowBuffer(n) " {{{2
     let i = 0
     while i >= l:n
       let bufn = l:stack[s:WrapInt(max_size, l:ptop + l:i - 1)]
-      if bufexists(bufn)
+      if bufloaded(bufn)
         let seekbufn = bufn
         let l:newptop = s:WrapInt(max_size, l:ptop + l:i)
       endif
@@ -136,7 +137,7 @@ function s:GetWindowBuffer(n) " {{{2
     let i = 0
     while i <= l:n
       let bufn = l:stack[s:WrapInt(max_size, l:ptop + l:i - 1)]
-      if buflisted(bufn)
+      if bufloaded(bufn)
         let seekbufn = bufn
         let l:newptop = s:WrapInt(max_size, l:ptop + l:i)
       endif
@@ -148,8 +149,12 @@ function s:GetWindowBuffer(n) " {{{2
     let l:n = 0
   endif
 
-  let s:winbuf_history[winid][1] = l:newptop
-  return [seekbufn, l:n]
+  if exists("l:newptop") && exists("l:seekbufn")
+    let s:winbuf_history[winid][1] = l:newptop
+    return [seekbufn, l:n]
+  else
+    return 0
+  endif
 endfunction " }}}1
 
 " LogWindowBufferHistory: adds current buffer as an entry to the
