@@ -157,6 +157,19 @@ function s:GetWindowBuffer(n) " {{{1
   endif
 endfunction " }}}1
 
+" PrintWindowHistory: print the dictionary value
+"   for window with given winid, for debugging pruposes
+function winhist#PrintWindowHistory() " {{{1
+  if exists("s:winbuf_history")
+    echomsg "winbuf_history: ".string(s:winbuf_history)
+  endif
+
+  if exists("s:winbuf_blacklist")
+    echomsg "winbuf_blacklist: ".string(s:winbuf_blacklist)
+  endif
+
+endfunction  " }}}1
+
 " ClearWindowHistory: remove buffer history for all windows
 function winhist#ClearWindowHistory(...) " {{{1
   if !exists("s:winbuf_history")
