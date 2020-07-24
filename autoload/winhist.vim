@@ -242,7 +242,14 @@ function winhist#LogWindowHistory(...) " {{{1
       endif
     endif
 
-    let [newtop, newsize] = s:PushCyclic(l:ptop, l:size, l:stack, bufnr(bufname()))
+    let max_size = len(l:stack)
+    if l:top >= l:ptop
+      let diff = l:top - l:ptop
+    else
+      let diff = l:top + (max_size - l:ptop)
+    endif
+    "echomsg "winhist#LogWindowHistory: diff=" . l:diff . ", " . l:bufn
+    let [newtop, newsize] = s:PushCyclic(l:ptop, l:size - l:diff, l:stack, l:bufn)
   endif
 
   let s:winbuf_history[winid][0] = l:newtop
