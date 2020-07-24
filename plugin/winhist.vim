@@ -7,6 +7,7 @@ let g:loaded_winhist = 1
 augroup WindowHistory
   au!
   au BufWinEnter * call winhist#LogWindowHistory()
+  au BufWinLeave * call winhist#LogWindowHistory()
 augroup END
 
 if !hasmapto("<Plug>WinHistNextBuffer")

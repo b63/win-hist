@@ -73,23 +73,29 @@ endfunction " }}}1
 "   it returns. Same arguments as GetWindowBuffer
 function winhist#SeekWindowBuffer(n) " {{{1
   let ret = s:GetWindowBuffer(a:n)
-  if type(ret) == v:t_list && len(ret) == 2
-    let [l:bufn, l:n] = l:ret
+  if type(ret) == v:t_list
+    let [l:bufn, l:n, l:newptop] = l:ret
 
     if !exists("s:winbuf_blacklist") 
       let s:winbuf_blacklist = { }
     endif
-    
-    let win_id = win_getid()
-    if has_key(s:winbuf_blacklist, win_id)
-      let blacklist = s:winbuf_blacklist[win_id]
+
+    let winid = win_getid()
+    if has_key(s:winbuf_blacklist, winid)
+      let blacklist = s:winbuf_blacklist[winid]
     else
       let blacklist = []
-      let s:winbuf_blacklist[win_id] = []
+      let s:winbuf_blacklist[winid] = blacklist
     endif
 
-    call add(blacklist, bufn)
-    execute ":buffer ".bufn."\n"
+    let curbufn = bufnr(bufname())
+    if curbufn != bufn
+      call add(blacklist, curbufn)   " for BufWinLeave
+      call add(blacklist, bufn)      " for BufWinEnter
+      execute ":buffer ".bufn."\n"
+    endif
+
+    let s:winbuf_history[winid][1] = l:newptop
   endif
 endfunction " }}}1
 
@@ -102,7 +108,7 @@ endfunction " }}}1
 "   is returned.
 function s:GetWindowBuffer(n) " {{{1
   if !exists("s:winbuf_history")
-    return
+    return 0
   endif
 
   let winid = win_getid()
@@ -150,8 +156,8 @@ function s:GetWindowBuffer(n) " {{{1
   endif
 
   if exists("l:newptop") && exists("l:seekbufn")
-    let s:winbuf_history[winid][1] = l:newptop
-    return [seekbufn, l:n]
+    "echomsg "winhist:GetWindowBuffer: ".string([seekbufn, l:n, l:newptop])
+    return [seekbufn, l:n, l:newptop]
   else
     return 0
   endif
@@ -198,7 +204,7 @@ function winhist#RemoveWindowHistory(...) " {{{1
 endfunction " }}}1
 
 " LogWindowBufferHistory: adds current buffer as an entry to the
-"   window-local history buffers opened in the current window
+"   window-local history buffers opened in the current window.
 function winhist#LogWindowHistory(...) " {{{1
   if !exists("s:winbuf_history")
     let s:winbuf_history = {}
@@ -212,7 +218,8 @@ function winhist#LogWindowHistory(...) " {{{1
     let [l:top, l:ptop, l:size, l:stack] = [0, 0, 0, []]
     let i = 0
 
-    " fill array
+    " allocate space for array
+    " TODO: check if there is better way to do this
     while i < s:MaxStackSize
       call add(l:stack, -1)
       let i += 1
@@ -227,12 +234,14 @@ function winhist#LogWindowHistory(...) " {{{1
     let bufn = bufnr(bufname())
     if exists("s:winbuf_blacklist") && has_key(s:winbuf_blacklist, winid)
       let [blacklist, blacklisted, l:i] = [s:winbuf_blacklist[winid], 0, 0]
+
       while l:i < len(blacklist)
         if blacklist[l:i] == bufn
           let blacklisted = 1
           call remove(blacklist, l:i)
           break
         endif
+
         let l:i += 1
       endwhile
 
