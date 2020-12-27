@@ -3,78 +3,119 @@ if !exists("g:WinHistMax")
   let g:WinHistMax = 10
 endif
 
-let s:MaxStackSize = g:WinHistMax + 1
-
-" WrapInt: 'wrap' an integer between 0 and a bound
-function s:WrapInt(max_exclusive, value) " {{{1
-  let modv = abs(a:value) % a:max_exclusive
-
-  if a:value < 0 && modv != 0
-    return a:max_exclusive - modv
-  endif
-  return modv
-endfunction " }}}1
-
-" PushCyclicList: push repeating items in list to a 'cyclic' stack
-"   duplicate consequtive items are not added
-function s:PushCyclicList(top, size, stack, items) " {{{1
-  let max_size = len(a:stack)
-  let top = a:top
-  let length = len(a:items)
-  let dupcliate = 0
-
-  if length < 1
-    return
-  endif
-
+" Contains: returns the index containing
+"   `item` in `list` or return -1 if not found.
+function s:Contains(item, list) " {{{1
+  let n = len(a:list)
   let i = 0
-  if a:size > 0
-    let prev = a:stack[s:WrapInt(max_size, l:top - 1)]
-  else
-    let prev = a:items[0]
-    let a:stack[l:top] = l:prev
-    let l:top = (l:top + 1) % max_size
-    let l:i += 1
-  endif
-
-  while i < length
-    " note: bad if max_size << len(a:items)
-    if prev != a:items[l:i]
-      let a:stack[l:top] = a:items[l:i]
-      let l:top = (l:top + 1) % max_size
-    else
-      let dupcliate += 1
+  while i < n
+    if a:list[l:i] == a:item
+      return i
     endif
-
-    let l:i += 1
+    let i += 1
   endwhile
 
-  return [l:top, min(a:size + length - dupcliate, max_size)]
-endfunction " }}}1
+  return -1 
+endfunction "}}}1
 
-" PushCyclic: push items in list to a 'cyclic' stack
-"   if the last item on the stack is the same, then
-"   the new item is not pushed
-function s:PushCyclic(top, size, stack, item) " {{{1
-  let max_size = len(a:stack)
-  if a:size > 0
-    let prev = a:stack[s:WrapInt(max_size, a:top - 1)] 
-    if prev == a:item
-      return [a:top, a:size]
+
+" Remove: remove entry containing `key` from history
+"   of window with winid of `winid`. The top, bot, and current
+"   entry are updated to point to new entries as appropriate.
+"   The current entry will point to the next entry if possible,
+"   otherwise to the previous entry.
+function s:Remove(key, winid) "{{{1
+  let [l:top, l:cur, l:bot, l:dict] = s:winbuf_history[a:winid]
+  if !has_key(l:dict, a:key)
+    return [l:top, l:cur, l:bot]
+  endif
+
+  " update previous node
+  let [l:prev, l:next] = l:dict[a:key]
+  if l:prev != -1 && has_key(l:dict, l:prev)
+    let l:dict[l:prev][1] = l:next
+  endif
+
+  " update next node
+  if l:next != -1 && has_key(l:dict, l:next)
+    let l:dict[l:next][0] = l:prev
+  endif
+
+  " update top
+  if l:top == a:key
+    let l:top = l:prev
+  endif
+
+  " update cur
+  if l:cur == a:key
+    if l:next == -1
+      let l:cur = l:prev
+    else
+      let l:cur = l:next
     endif
   endif
 
-  let a:stack[a:top] = a:item
+  " update bot
+  if l:bot == a:key
+    let l:bot = l:next
+  endif
 
-  return [(a:top + 1) % max_size, min([a:size + 1, max_size])]
-endfunction " }}}1
+  let s:winbuf_history[a:winid] = [l:top, l:cur, l:bot, l:dict]
+  return [l:top, l:cur, l:bot]
+endfunction "}}}1
+
+
+" InsertAfter: insert entry for `bufn` in history dictionary
+"     `dict` after the current entry. If entry with
+"     key `bufn` already exists, then it is removed first.
+"     The current entry will always be updated to point to newly inserted entry.
+function s:InsertAfter(bufn, winid) "{{{1
+  let [l:top, l:cur, l:bot, l:dict] = s:winbuf_history[a:winid]
+
+  if has_key(l:dict, a:bufn)
+    " key already exists, remove it updating top,bot,cur along the way
+    let [l:top, l:cur, l:bot] = s:Remove(a:bufn, a:winid)
+  endif
+
+
+  if l:cur == a:bufn
+    return
+  elseif l:cur == -1
+    " history is empty, so a:bufn will be the first item
+    let l:dict[a:bufn] = [-1, -1]
+    let s:winbuf_history[a:winid]  = [a:bufn, a:bufn, a:bufn, l:dict]
+    return [a:bufn, a:bufn, a:bufn]
+  endif
+
+  " update next node if one exists
+  let l:next = l:dict[l:cur][1]
+  if l:next != -1
+    let l:dict[l:next][0] = a:bufn
+  endif
+
+  " update current node
+  let l:dict[l:cur][1] = a:bufn
+  " insert the bufn node
+  let l:dict[a:bufn]   = [l:cur, l:next]
+
+  " update top if we inserted to top
+  if l:top == l:cur
+    let l:top = a:bufn
+  endif
+
+  " update global dictionary
+  let s:winbuf_history[a:winid] = [l:top, a:bufn, l:bot, l:dict]
+  return [l:top, a:bufn, l:bot]
+endfunction "}}}1
+
 
 " SeekWindowBuffer: wrapper for GetWindowBuffer to switch to the buffer
 "   it returns. Same arguments as GetWindowBuffer
 function winhist#SeekWindowBuffer(n) " {{{1
+  let bufn = bufnr(bufname())
   let ret = s:GetWindowBuffer(a:n)
   if type(ret) == v:t_list
-    let [l:bufn, l:n, l:newptop] = l:ret
+    let [l:seekbufn, l:n] = l:ret
 
     if !exists("s:winbuf_blacklist") 
       let s:winbuf_blacklist = { }
@@ -88,16 +129,14 @@ function winhist#SeekWindowBuffer(n) " {{{1
       let s:winbuf_blacklist[winid] = blacklist
     endif
 
-    let curbufn = bufnr(bufname())
-    if curbufn != bufn
-      call add(blacklist, curbufn)   " for BufWinLeave
-      call add(blacklist, bufn)      " for BufWinEnter
-      execute ":buffer ".bufn."\n"
+    if l:bufn != l:seekbufn
+      call add(blacklist, l:bufn)   " for BufWinLeave
+      call add(blacklist, l:seekbufn)      " for BufWinEnter
+      execute ":buffer ".l:seekbufn."\n"
     endif
-
-    let s:winbuf_history[winid][1] = l:newptop
   endif
 endfunction " }}}1
+
 
 " GetWindowBufferHistory: look n steps either backwards or forwards (+n or -n)
 "   in the list of buffers opened in the current window and return the
@@ -116,68 +155,107 @@ function s:GetWindowBuffer(n) " {{{1
     return 0
   endif
 
-  let [l:top, l:ptop, l:size, l:stack] = s:winbuf_history[winid]
-  if l:size < 1
+  let [l:top, l:cur, l:bot, l:hist] = s:winbuf_history[winid]
+  if !has_key(l:hist, l:cur)
     return 0
   endif
-  let max_size = len(l:stack)
-  if l:top >= l:ptop
-    let diff = l:top - l:ptop
-  else
-    let diff = l:top + (max_size - l:ptop)
-  endif
 
+  let l:seekbufn = l:cur
+  let l:i = 0
   if a:n < 0
-    let l:n = max([-l:size + diff + 1, a:n])
-    let i = 0
-    while i >= l:n
-      let bufn = l:stack[s:WrapInt(max_size, l:ptop + l:i - 1)]
-      if bufloaded(bufn)
-        let seekbufn = bufn
-        let l:newptop = s:WrapInt(max_size, l:ptop + l:i)
+    " look backward
+    while l:i > a:n && bufloaded(l:seekbufn)
+      let l:temp = l:hist[l:seekbufn][0]
+      if l:temp == -1
+        break
       endif
+
+      let l:seekbufn = l:temp
       let l:i -= 1
     endwhile
-  elseif a:n > 0
-    let l:n = min([diff, a:n])
-    let i = 0
-    while i <= l:n
-      let bufn = l:stack[s:WrapInt(max_size, l:ptop + l:i - 1)]
-      if bufloaded(bufn)
-        let seekbufn = bufn
-        let l:newptop = s:WrapInt(max_size, l:ptop + l:i)
+  else
+    " look foward
+    while l:i < a:n && bufloaded(l:seekbufn)
+      let l:temp = l:hist[l:seekbufn][1]
+      if l:temp == -1
+        break
       endif
+
+      let l:seekbufn = l:temp
       let l:i += 1
     endwhile
-  else
-    let seekbufn = l:stack[s:WrapInt(max_size, l:ptop-1)]
-    let l:newptop = l:ptop
-    let l:n = 0
   endif
 
-  if exists("l:newptop") && exists("l:seekbufn")
-    "echomsg "winhist:GetWindowBuffer: ".string([seekbufn, l:n, l:newptop])
-    return [seekbufn, l:n, l:newptop]
+  if l:seekbufn == l:cur
+    return [l:cur, 0]
   else
-    return 0
+    return [l:seekbufn, l:i]
   endif
 endfunction " }}}1
 
+
 " PrintWindowHistory: print the dictionary value
 "   for window with given winid, for debugging pruposes
-function winhist#PrintWindowHistory() " {{{1
-  if exists("s:winbuf_history")
-    echomsg "winbuf_history: ".string(s:winbuf_history)
+function winhist#PrintWindowHistory(...) " {{{1
+  if a:0 > 0
+    let l:winid = a:1
+  else
+    let l:winid = win_getid()
   endif
 
+  if exists("s:winbuf_history") && has_key(s:winbuf_history, l:winid)
+    let [l:top, l:cur, l:bot, l:hist] = s:winbuf_history[l:winid]
+
+    let l:arr = []
+    if l:bot != -1
+      let [l:c, l:duplicate] = [l:bot, 0]
+
+      while l:c != -1 && !duplicate
+        call add(l:arr, l:c)
+        let l:c = l:hist[l:c][1]
+        let l:duplicate = (s:Contains(l:c, l:arr) != -1)
+      endwhile
+
+      if duplicate
+        echoerr "Error: circular entries in history"
+      endif
+
+      echomsg "hist: ".string(l:arr)
+      echomsg "current: ".string(l:cur)
+    endif
+  endif
+
+  if exists("s:winbuf_blacklist") && has_key(s:winbuf_blacklist, winid)
+    echomsg "winbuf_blacklist: ".string(s:winbuf_blacklist[winid])
+  endif
+endfunction  " }}}1
+
+
+function winhist#PrintAll() "{{{1
+  if exists("s:winbuf_history")
+    echomsg "winbuf_history: ".string(s:winbuf_history)
   if exists("s:winbuf_blacklist")
     echomsg "winbuf_blacklist: ".string(s:winbuf_blacklist)
   endif
+endfunction "}}}1
 
-endfunction  " }}}1
 
-" ClearWindowHistory: remove buffer history for all windows
+" ClearWindowHistory: remove buffer history for a window
 function winhist#ClearWindowHistory(...) " {{{1
+  if a:0 > 1
+    let winid = a:1
+  else
+    let winid = win_getid()
+  endif
+
+  if exists("s:winbuf_history") && has_key(s:winbuf_history, winid)
+    unlet s:winbuf_history[winid]
+    call winhist#LogWindowHistory()
+  endif
+endfunction " }}}1
+
+" ClearAllWindowHistory: remove buffer history for all windows
+function winhist#ClearAllWindowHistory(...) " {{{1
   if !exists("s:winbuf_history")
     return
   endif
@@ -185,6 +263,7 @@ function winhist#ClearWindowHistory(...) " {{{1
   unlet s:winbuf_history
   let s:winbuf_history = {}
 endfunction " }}}1
+
 
 " RemoveWindowHistory: remove the buffer history
 "   of the windows with the given winid(s).
@@ -203,67 +282,44 @@ function winhist#RemoveWindowHistory(...) " {{{1
   endif
 endfunction " }}}1
 
+
 " LogWindowBufferHistory: adds current buffer as an entry to the
 "   window-local history buffers opened in the current window.
-function winhist#LogWindowHistory(...) " {{{1
+function winhist#LogWindowHistory() " {{{1
   if !exists("s:winbuf_history")
     let s:winbuf_history = {}
   endif
 
   let winid = win_getid()
 
-  if has_key(s:winbuf_history, winid)
-    let [l:top, l:ptop, l:size, l:stack] = s:winbuf_history[winid]
+  if has_key(s:winbuf_history, l:winid)
+    " top: top/head of linked list
+    " bot: bottom/tail of linked list
+    " cur: current entry in linked list; new buffers(nodes) inserted
+    "      after this entry
+    " an 'entry' or 'node' refers to an item the history(dictionary)
+    " the keys are the buffer ids and value is [prev, next] where
+    " prev is the buffer-id of the previous buffer/node the next is
+    " the next buffer/node in the linked list
+    let [l:top, l:cur, l:bot, l:hist] = s:winbuf_history[l:winid]
   else
-    let [l:top, l:ptop, l:size, l:stack] = [0, 0, 0, []]
-    let i = 0
-
-    " allocate space for array
-    " TODO: check if there is better way to do this
-    while i < s:MaxStackSize
-      call add(l:stack, -1)
-      let i += 1
-    endwhile
-
-    let s:winbuf_history[winid] = [0, 0, 0, l:stack]
+    let [l:top, l:cur, l:bot, l:hist] = [-1, -1, -1, {}]
+    let s:winbuf_history[winid] = [-1, -1, -1, l:hist]
   endif
 
-  if a:0 > 0
-    let [newtop, newsize] = s:PushCyclicList(l:ptop, l:size, l:stack, a:000)
-  else
-    let bufn = bufnr(bufname())
-    if exists("s:winbuf_blacklist") && has_key(s:winbuf_blacklist, winid)
-      let [blacklist, blacklisted, l:i] = [s:winbuf_blacklist[winid], 0, 0]
+  let bufn = bufnr(bufname())
+  if exists("s:winbuf_blacklist") && has_key(s:winbuf_blacklist, winid)
+    let blacklist = s:winbuf_blacklist[winid]
+    let i = s:Contains(bufn, blacklist)
 
-      while l:i < len(blacklist)
-        if blacklist[l:i] == bufn
-          let blacklisted = 1
-          call remove(blacklist, l:i)
-          break
-        endif
-
-        let l:i += 1
-      endwhile
-
-      " don't push onto history if blacklisted
-      if blacklisted
-        return
-      endif
+    if l:i != -1
+      call remove(blacklist, l:i)
+      let s:winbuf_history[winid][1] = l:bufn
+      return
     endif
-
-    let max_size = len(l:stack)
-    if l:top >= l:ptop
-      let diff = l:top - l:ptop
-    else
-      let diff = l:top + (max_size - l:ptop)
-    endif
-    "echomsg "winhist#LogWindowHistory: diff=" . l:diff . ", " . l:bufn
-    let [newtop, newsize] = s:PushCyclic(l:ptop, l:size - l:diff, l:stack, l:bufn)
   endif
 
-  let s:winbuf_history[winid][0] = l:newtop
-  let s:winbuf_history[winid][1] = l:newtop
-  let s:winbuf_history[winid][2] = l:newsize
+  call s:InsertAfter(l:bufn, l:winid)
 endfunction " }}}1
 
 
